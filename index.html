@@ -1,0 +1,315 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NIS1 Node Watch Console</title>
+<script src="https://cdn.tailwindcss.com/3.4.16"></script>
+<script>tailwind.config = { darkMode: 'media' }</script>
+<style>[x-cloak]{display:none !important}</style>
+<script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.8/dist/cdn.min.js"></script>
+</head>
+<body class="bg-slate-50 text-slate-800 dark:bg-slate-900 dark:text-slate-100 min-h-screen" x-data="app()">
+<div class="max-w-6xl mx-auto px-4 py-6">
+  <header class="flex flex-wrap items-center justify-between gap-3 mb-4">
+    <h1 class="text-xl font-bold">NIS1 Node Watch Console</h1>
+    <div class="flex items-center gap-2 text-sm">
+      <span class="text-slate-500 dark:text-slate-400" x-text="updated"></span>
+      <button @click="refresh()" :disabled="loading" class="px-3 py-1.5 rounded bg-indigo-600 text-white hover:bg-indigo-700">Refresh</button>
+      <button @click="openPicker()" class="px-3 py-1.5 rounded bg-emerald-600 text-white hover:bg-emerald-700">Select Nodes (<span x-text="saved.length"></span>/50)</button>
+    </div>
+  </header>
+
+  <div x-show="msg" x-text="msg" class="mb-3 rounded p-3 text-sm bg-amber-100 text-amber-900 dark:bg-amber-900/40 dark:text-amber-100"></div>
+
+  <!-- 監視一覧: md以上はテーブル、小画面はカード -->
+  <div :class="saved.length ? 'hidden md:block' : 'hidden'" class="overflow-x-auto rounded-lg shadow bg-white dark:bg-slate-800">
+    <table class="min-w-full text-sm">
+      <thead class="bg-slate-100 dark:bg-slate-700 text-left">
+        <tr>
+          <th class="px-3 py-2">Hostname</th>
+          <th class="px-3 py-2">HTTPS</th>
+          <template x-for="c in colDefs" :key="c.label">
+            <th class="px-3 py-2" :class="c.right && 'text-right'" x-text="c.label"></th>
+          </template>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-slate-200 dark:divide-slate-700">
+        <template x-for="i in items" :key="i.ep">
+          <tr>
+            <td class="px-3 py-2 break-all">
+              <div class="font-medium" x-text="hostOf(i.ep)"></div>
+              <div class="text-xs text-slate-500 dark:text-slate-400" x-text="i.n?.name || (i.n ? '' : '(not in nodewatch)')"></div>
+            </td>
+            <td class="px-3 py-2" x-html="badge(i.ep)"></td>
+            <template x-for="c in cols(i)" :key="c.label">
+              <td class="px-3 py-2" :class="[c.right && 'text-right tabular-nums', c.cls]" x-text="c.text"></td>
+            </template>
+          </tr>
+        </template>
+      </tbody>
+    </table>
+  </div>
+  <div class="md:hidden grid gap-3">
+    <template x-for="i in items" :key="i.ep">
+      <div class="rounded-lg shadow bg-white dark:bg-slate-800 p-3">
+        <div class="flex justify-between items-start gap-2">
+          <div class="min-w-0">
+            <div class="font-medium break-all" x-text="hostOf(i.ep)"></div>
+            <div class="text-xs text-slate-500 dark:text-slate-400" x-text="i.n?.name || ''"></div>
+          </div>
+          <span x-html="badge(i.ep)"></span>
+        </div>
+        <dl class="grid grid-cols-2 min-[400px]:grid-cols-3 gap-2 mt-2 text-sm">
+          <template x-for="c in cols(i)" :key="c.label">
+            <div>
+              <dt class="text-xs text-slate-500 dark:text-slate-400" x-text="c.label"></dt>
+              <dd :class="[c.right && 'tabular-nums', c.cls]" x-text="c.text"></dd>
+            </div>
+          </template>
+        </dl>
+      </div>
+    </template>
+  </div>
+  <p x-show="!saved.length" class="text-center text-slate-500 dark:text-slate-400 py-12">No nodes to monitor. Add some from "Select Nodes".</p>
+
+  <footer class="mt-10 flex flex-col items-center gap-1 text-emerald-600 dark:text-emerald-400">
+  </footer>
+</div>
+
+<!-- ノード選択モーダル -->
+<div x-show="open" x-cloak @keydown.escape.window="open = false" class="fixed inset-0 z-50 bg-black/50 flex items-end sm:items-center justify-center">
+  <div class="bg-white dark:bg-slate-800 w-full sm:max-w-2xl max-h-[90vh] flex flex-col rounded-t-xl sm:rounded-xl shadow-xl">
+    <div class="p-4 border-b border-slate-200 dark:border-slate-700 flex flex-wrap gap-2 items-center">
+      <input x-model="filter" @input="renderPicker()" type="search" placeholder="Filter by hostname / name"
+             class="flex-1 min-w-0 px-3 py-2 rounded border border-slate-300 dark:border-slate-600 bg-transparent">
+      <span class="text-sm whitespace-nowrap"><span x-text="draft.length"></span>/50 selected</span>
+      <button @click="clearAll()" :disabled="!draft.length" class="px-3 py-1.5 rounded border border-slate-300 dark:border-slate-600 text-sm whitespace-nowrap disabled:opacity-40">Clear all</button>
+    </div>
+    <div x-show="pickerMsg" x-text="pickerMsg" class="mx-4 mt-3 rounded p-2 text-sm bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-100"></div>
+    <ul class="flex-1 overflow-y-auto p-2">
+      <template x-for="n in picker" :key="n.endpoint">
+        <li><label class="flex items-center gap-3 px-2 py-2 rounded hover:bg-slate-100 dark:hover:bg-slate-700 cursor-pointer">
+          <input type="checkbox" class="w-4 h-4 shrink-0" :checked="draft.includes(n.endpoint)" @change="toggle($event, n.endpoint)">
+          <span class="min-w-0 flex-1">
+            <span class="block break-all text-sm" x-text="n.endpoint"></span>
+            <span class="block text-xs text-slate-500 dark:text-slate-400" x-text="`${n.name || ''} ・ v${n.version || '-'}`"></span>
+          </span>
+        </label></li>
+      </template>
+      <li x-show="!picker.length" class="p-4 text-center text-slate-500">No matches</li>
+    </ul>
+    <div class="p-4 border-t border-slate-200 dark:border-slate-700 flex justify-end gap-2">
+      <button @click="open = false" class="px-4 py-2 rounded border border-slate-300 dark:border-slate-600">Cancel</button>
+      <button @click="save()" class="px-4 py-2 rounded bg-emerald-600 text-white hover:bg-emerald-700">Save</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const SUPER_API = 'https://nem.io/supernode/api/nodes';
+const SUPER_PAGE = 100;
+const API ='https://nodewatch.symbol.tools/api/nem/nodes';
+const COOKIE = 'nis1_watch_nodes';
+const MAX = 50;
+// クライアント証明書を要求するホスト。HTTPS確認で接続すると証明書選択ダイアログが出るため確認を省略する
+const NO_HTTPS_CHECK = new Set(['super-nem.love']);
+
+const hostOf = u => { try { return new URL(u).hostname; } catch { return u; } };
+const fmtBal = n => n == null ? '-' : Number(n).toLocaleString(undefined, { maximumFractionDigits: 2 });
+const fmtH = n => n == null ? '-' : Number(n).toLocaleString();
+// seconds -> "1y 2mo 3d 4h 5m 6s" (year=365d, month=30d approx; zero units omitted)
+const fmtUp = s => {
+  if (s == null || isNaN(s)) return '-';
+  let r = Math.max(0, Math.floor(s));
+  const units = [['y', 31536000], ['mo', 2592000], ['d', 86400], ['h', 3600], ['m', 60]];
+  const parts = [];
+  for (const [u, sec] of units) {
+    const q = Math.floor(r / sec);
+    r -= q * sec;
+    if (q) parts.push(q + u);
+  }
+  if (r || !parts.length) parts.push(r + 's');
+  return parts.join(' ');
+};
+
+// /node/extended-info の platform ("Ubuntu (25.0.4.1) on Linux") からOS名とJavaメジャーバージョンを抽出
+const osName = p => { const m = /^\s*(.*?)\s*\(/.exec(p || ''); return m && m[1] ? m[1] : null; };
+const javaMajor = p => {
+  const m = /\((\d+)(?:\.(\d+))?/.exec(p || '');
+  if (!m) return null;
+  return m[1] === '1' && m[2] ? m[2] : m[1]; // Java 8 以前は "1.8.x" 形式
+};
+
+// タイムアウト付き fetch
+async function timedFetch(url, ms, opts = {}) {
+  const ctl = new AbortController();
+  const t = setTimeout(() => ctl.abort(), ms);
+  try { return await fetch(url, { ...opts, signal: ctl.signal }); }
+  finally { clearTimeout(t); }
+}
+
+function loadSaved() {
+  try {
+    const m = document.cookie.split('; ').find(c => c.startsWith(COOKIE + '='));
+    if (!m) return [];
+    const v = JSON.parse(decodeURIComponent(m.slice(COOKIE.length + 1)));
+    return Array.isArray(v) ? v.filter(x => typeof x === 'string').slice(0, MAX) : [];
+  } catch { return []; }
+}
+
+function app() {
+  return {
+    allNodes: [], saved: loadSaved(),
+    live: {}, java: {}, os: {}, uptime: {}, slots: {}, superEps: null, httpsOk: {}, // endpoint -> 値 (httpsOk: true | false | 'checking')
+    loading: false, msg: '', updated: '',
+    open: false, filter: '', draft: [], picker: [], pickerMsg: '',
+    hostOf,
+    colDefs: [
+      { label: 'Block height', right: true }, { label: 'Balance', right: true },
+      { label: 'Version' }, { label: 'Java' }, { label: 'OS' },
+      { label: 'Supernode' }, { label: 'Delegation slots (max)', right: true }, { label: 'Delegation slots (free)', right: true },
+      { label: 'Uptime', right: true },
+    ],
+
+    init() {
+      this.refresh();
+      setInterval(() => this.refresh(), 60000);
+    },
+
+    // ---- 監視一覧 ----
+    get items() {
+      const byEp = new Map(this.allNodes.map(n => [n.endpoint, n]));
+      const items = this.saved.map(ep => ({ ep, n: byEp.get(ep), h: this.live[ep] ?? byEp.get(ep)?.height }));
+      const maxH = Math.max(0, ...items.map(i => i.h ?? 0));
+      return items.map(i => ({ ...i, behind: i.h != null && maxH - i.h > 3 }));
+    },
+    cols(i) {
+      const sl = this.slots[i.ep], up = this.uptime[i.ep];
+      const v = [fmtH(i.h), fmtBal(i.n?.balance), i.n?.version || '-', this.java[i.ep] || '-', this.os[i.ep] || '-',
+        this.superEps == null ? '-' : this.superEps.has(i.ep) ? '○' : '×',
+        sl ? fmtH(sl.max) : '-', sl ? fmtH(sl.max - sl.num) : '-', fmtUp(up)];
+      return this.colDefs.map((c, k) => ({
+        ...c, text: v[k],
+        cls: k === 0 && i.behind ? 'text-red-600 dark:text-red-400 font-semibold'
+          : k === 5 && v[5] === '○' ? 'text-emerald-600 dark:text-emerald-400 font-semibold' : '',
+      }));
+    },
+    badge(ep) {
+      const st = this.httpsOk[ep], ok = st === true;
+      const cls = ok
+        ? 'text-emerald-500 drop-shadow-[0_0_6px_rgba(16,185,129,0.9)]'
+        : 'text-slate-400 dark:text-slate-600' + (st === 'checking' ? ' animate-pulse' : '');
+      const title = ok ? 'HTTPS available' : st === 'checking' ? 'Checking…' : st === false ? 'HTTPS unavailable' : 'Unchecked';
+      return `<svg class="w-5 h-5 inline-block ${cls}" viewBox="0 0 24 24" fill="currentColor" role="img" aria-label="${title}"><title>${title}</title><path d="M12 1a5 5 0 0 0-5 5v3H6a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-9a2 2 0 0 0-2-2h-1V6a5 5 0 0 0-5-5zm-3 8V6a3 3 0 0 1 6 0v3H9z"/></svg>`;
+    },
+
+    // ---- データ取得 ----
+    async fetchNodes() {
+      const r = await fetch(API);
+      if (!r.ok) throw new Error('nodewatch HTTP ' + r.status);
+      // x-for の :key (endpoint) が重複すると Alpine が描画に失敗するため、endpoint で重複排除
+      const list = await r.json();
+      this.allNodes = [...new Map(list.map(n => [n.endpoint, n])).values()];
+    },
+    // HTTPSで実際にTLS接続できるか確認(no-corsなので応答が不透明でも、接続成功ならresolveする)
+    async checkHttps(ep) {
+      if (NO_HTTPS_CHECK.has(hostOf(ep))) return; // 未確認のまま(バッジは「未確認」表示)
+      if (this.httpsOk[ep] === true || this.httpsOk[ep] === 'checking') return;
+      this.httpsOk[ep] = 'checking';
+      let u;
+      try { u = new URL(ep); } catch { this.httpsOk[ep] = false; return; }
+      const port = u.protocol === 'https:' ? u.port : (u.port === '7890' || !u.port ? '7891' : '');
+      if (!port) { this.httpsOk[ep] = false; return; }
+      try {
+        await timedFetch(`https://${u.hostname}:${port}/chain/height`, 6000, { mode: 'no-cors' });
+        this.httpsOk[ep] = true;
+      } catch { this.httpsOk[ep] = false; }
+    },
+    // ノード自身から最新の高さを取得(CORS等で失敗したらnodewatchの値を使う)
+    async fetchLive(ep) {
+      try {
+        const r = await timedFetch(ep.replace(/\/$/, '') + '/chain/height', 5000);
+        this.live[ep] = (await r.json()).height;
+      } catch { delete this.live[ep]; }
+    },
+    async fetchPlatform(ep) {
+      try {
+        const r = await timedFetch(ep.replace(/\/$/, '') + '/node/extended-info', 5000);
+        const j = await r.json();
+        const p = j?.node?.metaData?.platform;
+        const { currentTime: now, startTime: start } = j?.nisInfo || {};
+        if (now != null && start != null) this.uptime[ep] = now - start; // NEM時間(秒)の差
+        else delete this.uptime[ep];
+        const v = javaMajor(p), o = osName(p);
+        if (v) this.java[ep] = v;
+        if (o) this.os[ep] = o;
+      } catch {}
+    },
+    // 委任(harvest unlock)枠: max-unlocked と num-unlocked
+    async fetchSlots(ep) {
+      try {
+        const r = await timedFetch(ep.replace(/\/$/, '') + '/account/unlocked/info', 5000, { method: 'POST' });
+        const j = await r.json();
+        this.slots[ep] = { max: j['max-unlocked'], num: j['num-unlocked'] };
+      } catch { delete this.slots[ep]; }
+    },
+    // NEM Supernode Program に active で登録されているノード
+    async fetchSupernodes() {
+      try {
+        // APIは1回100件まで。active のみ絞り込み、100件未満になるまで offset を進めて全件取得する
+        const eps = new Set();
+        for (let off = 0; off < 5000; off += SUPER_PAGE) {
+          const r = await timedFetch(`${SUPER_API}?status=active&count=${SUPER_PAGE}&offset=${off}`, 8000);
+          const list = await r.json();
+          list.filter(n => n.status === 'active').forEach(n => eps.add(n.endpoint));
+          if (list.length < SUPER_PAGE) break;
+        }
+        this.superEps = eps;
+      } catch {}
+    },
+    async refresh() {
+      this.loading = true;
+      this.msg = '';
+      try { await this.fetchNodes(); } catch (e) { this.msg = 'Failed to fetch node list from nodewatch: ' + e.message; }
+      await Promise.all([this.fetchSupernodes(), ...this.saved.flatMap(ep => [this.checkHttps(ep), this.fetchLive(ep), this.fetchPlatform(ep), this.fetchSlots(ep)])]);
+      this.updated = 'Updated: ' + new Date().toLocaleTimeString();
+      this.loading = false;
+    },
+
+    // ---- ノード選択 ----
+    openPicker() {
+      this.draft = [...this.saved];
+      this.filter = ''; this.pickerMsg = '';
+      this.renderPicker();
+      this.open = true;
+    },
+    renderPicker() {
+      const q = this.filter.trim().toLowerCase();
+      this.picker = this.allNodes
+        .filter(n => !q || n.endpoint.toLowerCase().includes(q) || (n.name || '').toLowerCase().includes(q))
+        .sort((a, b) => (this.draft.includes(b.endpoint) - this.draft.includes(a.endpoint)) || hostOf(a.endpoint).localeCompare(hostOf(b.endpoint)));
+    },
+    clearAll() {
+      this.draft = [];
+      this.pickerMsg = '';
+      this.renderPicker();
+    },
+    toggle(e, ep) {
+      if (!e.target.checked) this.draft = this.draft.filter(x => x !== ep);
+      else if (this.draft.length >= MAX) { e.target.checked = false; this.pickerMsg = `Up to ${MAX} nodes allowed.`; return; }
+      else this.draft.push(ep);
+      this.pickerMsg = '';
+    },
+    save() {
+      this.saved = [...this.draft];
+      document.cookie = `${COOKIE}=${encodeURIComponent(JSON.stringify(this.saved))}; max-age=${60*60*24*365}; path=/; SameSite=Lax`;
+      this.open = false;
+      this.live = {};
+      this.refresh();
+    },
+  };
+}
+</script>
+</body>
+</html>
