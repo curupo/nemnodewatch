@@ -1,4 +1,4 @@
-# NIS1 Node Watch Console
+# NIS1 Node Watch
 
 NEM(NIS1)ネットワークのノードを選んで、状態をまとめて監視できる軽量なブラウザ用ダッシュボードです。
 `index.html` 1ファイルだけで動作し、ビルドやサーバーサイドの処理は不要です。
