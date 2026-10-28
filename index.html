@@ -16,7 +16,7 @@
     <div class="flex items-center gap-2 text-sm">
       <span class="text-slate-500 dark:text-slate-400" x-text="updated"></span>
       <button @click="refresh()" :disabled="loading" class="px-3 py-1.5 rounded bg-indigo-600 text-white hover:bg-indigo-700">Refresh</button>
-      <button @click="openPicker()" class="px-3 py-1.5 rounded bg-emerald-600 text-white hover:bg-emerald-700">Select Nodes (<span x-text="saved.length"></span>/50)</button>
+      <button @click="openPicker()" class="px-3 py-1.5 rounded bg-emerald-600 text-white hover:bg-emerald-700">Select Nodes (<span x-text="saved.length"></span>)</button>
     </div>
   </header>
 
@@ -83,7 +83,8 @@
     <div class="p-4 border-b border-slate-200 dark:border-slate-700 flex flex-wrap gap-2 items-center">
       <input x-model="filter" @input="renderPicker()" type="search" placeholder="Filter by hostname / name"
              class="flex-1 min-w-0 px-3 py-2 rounded border border-slate-300 dark:border-slate-600 bg-transparent">
-      <span class="text-sm whitespace-nowrap"><span x-text="draft.length"></span>/50 selected</span>
+      <span class="text-sm whitespace-nowrap"><span x-text="draft.length"></span> selected</span>
+      <button @click="selectAll()" :disabled="!picker.length" class="px-3 py-1.5 rounded border border-slate-300 dark:border-slate-600 text-sm whitespace-nowrap disabled:opacity-40">Select all</button>
       <button @click="clearAll()" :disabled="!draft.length" class="px-3 py-1.5 rounded border border-slate-300 dark:border-slate-600 text-sm whitespace-nowrap disabled:opacity-40">Clear all</button>
     </div>
     <div x-show="pickerMsg" x-text="pickerMsg" class="mx-4 mt-3 rounded p-2 text-sm bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-100"></div>
@@ -111,7 +112,6 @@ const SUPER_API = 'https://nem.io/supernode/api/nodes';
 const SUPER_PAGE = 100;
 const API ='https://nodewatch.symbol.tools/api/nem/nodes';
 const COOKIE = 'nis1_watch_nodes';
-const MAX = 50;
 // クライアント証明書を要求するホスト。HTTPS確認で接続すると証明書選択ダイアログが出るため確認を省略する
 const NO_HTTPS_CHECK = new Set(['super-nem.love']);
 
@@ -151,10 +151,14 @@ async function timedFetch(url, ms, opts = {}) {
 
 function loadSaved() {
   try {
-    const m = document.cookie.split('; ').find(c => c.startsWith(COOKIE + '='));
-    if (!m) return [];
-    const v = JSON.parse(decodeURIComponent(m.slice(COOKIE.length + 1)));
-    return Array.isArray(v) ? v.filter(x => typeof x === 'string').slice(0, MAX) : [];
+    let raw = localStorage.getItem(COOKIE);
+    if (raw === null) { // 旧版(cookie保存)からの移行
+      const m = document.cookie.split('; ').find(c => c.startsWith(COOKIE + '='));
+      if (!m) return [];
+      raw = decodeURIComponent(m.slice(COOKIE.length + 1));
+    }
+    const v = JSON.parse(raw);
+    return Array.isArray(v) ? v.filter(x => typeof x === 'string') : [];
   } catch { return []; }
 }
 
@@ -295,15 +299,20 @@ function app() {
       this.pickerMsg = '';
       this.renderPicker();
     },
+    selectAll() {
+      // フィルタ中は表示中のノードのみ追加
+      this.draft = [...new Set([...this.draft, ...this.picker.map(n => n.endpoint)])];
+      this.pickerMsg = '';
+    },
     toggle(e, ep) {
       if (!e.target.checked) this.draft = this.draft.filter(x => x !== ep);
-      else if (this.draft.length >= MAX) { e.target.checked = false; this.pickerMsg = `Up to ${MAX} nodes allowed.`; return; }
       else this.draft.push(ep);
       this.pickerMsg = '';
     },
     save() {
       this.saved = [...this.draft];
-      document.cookie = `${COOKIE}=${encodeURIComponent(JSON.stringify(this.saved))}; max-age=${60*60*24*365}; path=/; SameSite=Lax`;
+      try { localStorage.setItem(COOKIE, JSON.stringify(this.saved)); } catch {}
+      document.cookie = `${COOKIE}=; max-age=0; path=/; SameSite=Lax`;
       this.open = false;
       this.live = {};
       this.refresh();
